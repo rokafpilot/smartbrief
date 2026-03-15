@@ -14,7 +14,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # 프로젝트 루트로 이동
 cd "$PROJECT_ROOT"
 
-# --- 설정값 ---김세진
+# --- 설정값 ---정동혁
 PROJECT_ID="smartbrief-490302"
 REGION="asia-northeast3"               # 서울 권장
 REPO="smartnotam"                       # Artifact Registry 저장소명
@@ -413,6 +413,17 @@ if [ -f "$ADC_FILE" ]; then
     # gcloud 명령어로도 취소 시도 (--quiet로 대화형 프롬프트 방지)
     gcloud auth application-default revoke --quiet 2>/dev/null || true
     echo -e "${GREEN}✅ ADC 정리 완료${NC}"
+fi
+
+# cloudbuild.yaml을 GitHub에 올려 트리거에서 사용 가능하게 함
+if [ -f "$PROJECT_ROOT/cloudbuild.yaml" ] && [ -d "$PROJECT_ROOT/.git" ]; then
+  cd "$PROJECT_ROOT"
+  if git status --short cloudbuild.yaml | grep -q .; then
+    echo -e "\n${CYAN}cloudbuild.yaml을 GitHub에 올리는 중...${NC}"
+    git add cloudbuild.yaml
+    git commit -m "Update cloudbuild.yaml for Cloud Build trigger" 2>/dev/null && git push origin main 2>/dev/null && echo -e "${GREEN}✅ cloudbuild.yaml 푸시 완료${NC}" || echo -e "${YELLOW}⚠️  cloudbuild.yaml 푸시 실패 또는 변경 없음. 수동으로 git push 하세요.${NC}"
+  fi
+  cd - >/dev/null
 fi
 
 echo -e "\n${GREEN}✅ 모든 작업 완료!${NC}"
