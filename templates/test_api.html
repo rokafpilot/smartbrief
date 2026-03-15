@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Package 3 API 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            border: 1px solid #ddd;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px 5px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Package 3 API 테스트</h1>
+    
+    <div class="test-section">
+        <h2>테스트 1: Package 3 추출만</h2>
+        <button onclick="testExtractPackage3()">Package 3 추출 테스트</button>
+        <p><small>temp 디렉토리에서 최신 split.txt를 찾아 Package 3를 추출합니다.</small></p>
+    </div>
+    
+    <div class="test-section">
+        <h2>테스트 2: AI 항로 분석 (Package 3 자동 추출)</h2>
+        <input type="text" id="routeInput" placeholder="항로 입력 (예: RKSI OSPOT Y782 TGU RJAA)" 
+               style="width: 100%; padding: 8px; margin-bottom: 10px;">
+        <button onclick="testRouteAnalysis()">항로 분석 테스트</button>
+        <p><small>Package 3를 자동으로 추출하고 AI 항로 분석을 수행합니다.</small></p>
+    </div>
+    
+    <div class="test-section">
+        <h2>테스트 3: 폴백 모드 (페이지 데이터 사용)</h2>
+        <button onclick="testFallbackMode()">폴백 모드 테스트</button>
+        <p><small>use_package3_extraction: false로 설정하여 폴백 모드를 테스트합니다.</small></p>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        const resultDiv = document.getElementById('result');
+        
+        function showResult(data, isSuccess = true) {
+            resultDiv.className = isSuccess ? 'success' : 'error';
+            resultDiv.innerHTML = JSON.stringify(data, null, 2);
+        }
+        
+        async function testExtractPackage3() {
+            resultDiv.innerHTML = '⏳ Package 3 추출 중...';
+            
+            try {
+                const response = await fetch('/api/extract_package3', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({})
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    console.log('✅ Package 3 추출 성공:', data);
+                    showResult(data, true);
+                } else {
+                    console.error('❌ API 오류:', data);
+                    showResult(data, false);
+                }
+            } catch (error) {
+                console.error('❌ 요청 실패:', error);
+                showResult({ error: error.message }, false);
+            }
+        }
+        
+        async function testRouteAnalysis() {
+            const route = document.getElementById('routeInput').value.trim();
+            
+            if (!route) {
+                alert('항로를 입력해주세요.');
+                return;
+            }
+            
+            resultDiv.innerHTML = '⏳ AI 항로 분석 중...';
+            
+            try {
+                console.log('🚀 API 호출 시작:', {
+                    route: route,
+                    use_package3_extraction: true
+                });
+                
+                const response = await fetch('/api/analyze_route', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        route: route,
+                        use_package3_extraction: true,
+                        dep: 'RKSI',
+                        dest: 'RJAA'
+                    })
+                });
+                
+                console.log('📡 응답 상태:', response.status);
+                
+                const data = await response.json();
+                console.log('📦 응답 데이터:', data);
+                
+                if (response.ok) {
+                    console.log('✅ AI 분석 성공');
+                    showResult({
+                        status: 'SUCCESS',
+                        route: data.route,
+                        package3_file: data.package3_file,
+                        split_file: data.split_file,
+                        analysis_preview: data.gemini_analysis ? 
+                            data.gemini_analysis.substring(0, 200) + '...' : 
+                            'N/A'
+                    }, true);
+                } else {
+                    console.error('❌ API 오류:', data);
+                    showResult(data, false);
+                }
+            } catch (error) {
+                console.error('❌ 요청 실패:', error);
+                showResult({ error: error.message, stack: error.stack }, false);
+            }
+        }
+        
+        async function testFallbackMode() {
+            resultDiv.innerHTML = '⏳ 폴백 모드 테스트 중...';
+            
+            try {
+                const response = await fetch('/api/analyze_route', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        route: 'RKSI OSPOT Y782 TGU RJAA',
+                        use_package3_extraction: false,
+                        notam_data: []  // 빈 배열로 테스트
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult(data, true);
+                } else {
+                    showResult(data, false);
+                }
+            } catch (error) {
+                showResult({ error: error.message }, false);
+            }
+        }
+        
+        // 페이지 로드 시 기본 항로 설정
+        document.getElementById('routeInput').value = 'RKSI OSPOT Y782 TGU Y781 BESNA RJAA';
+    </script>
+</body>
+</html>

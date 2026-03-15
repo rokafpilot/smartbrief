@@ -71,6 +71,9 @@ tests/
 *_test.py
 saved_results/
 *.html
+# Flask 템플릿은 배포에 필요하므로 예외
+!templates/
+!templates/*.html
 
 # 백업 파일
 *.backup

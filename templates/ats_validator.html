@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✈️ ATS FPL Route Validator - SmartNOTAM3</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Bootstrap CSS 이후에 로드되도록 하여 우선순위 확보 */
+        /* 모든 터뷸런스 분석 관련 스타일을 최상위 우선순위로 설정 */
+        .waypoint-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        .waypoint-table th {
+            background-color: #0d6efd;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            border: 1px solid #ddd;
+            position: sticky;
+            top: 0;
+        }
+        .waypoint-table td {
+            padding: 8px;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+        .waypoint-table tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        .match-ok {
+            background-color: #d4edda !important;
+            color: #155724;
+            font-weight: bold;
+        }
+        .match-fail {
+            background-color: #f8d7da !important;
+            color: #721c24;
+            font-weight: bold;
+        }
+        .match-warn {
+            background-color: #fff3cd !important;
+            color: #856404;
+        }
+        .route-textarea {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .turbulence-analysis-content {
+            font-size: 15px;
+            line-height: 1.0;
+            color: #333;
+        }
+        /* 모든 스타일을 !important로 강제 적용 */
+        .turbulence-analysis-content * {
+            box-sizing: border-box;
+        }
+        .turbulence-analysis-content h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-top: 30px;
+            margin-bottom: 20px;
+            color: #0d6efd;
+        }
+        .turbulence-analysis-content h2 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            color: #0d6efd;
+        }
+        /* h3 스타일은 app.py의 인라인 스타일이 우선 적용되므로 여기서는 백업용으로만 유지 */
+        .turbulence-analysis-content h3 {
+            font-size: 20px !important;
+            font-weight: 700 !important;
+            border-bottom: 2px solid #0d6efd !important;
+            padding-bottom: 6px !important;
+            margin-top: 15px !important;
+            margin-bottom: 0px !important;
+            color: #0d6efd !important;
+        }
+        .turbulence-analysis-content h4 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 20px;
+            margin-bottom: 15px;
+            color: #495057;
+        }
+        .turbulence-analysis-content p {
+            font-size: 15px;
+            line-height: 1.0;
+            margin-bottom: 6px;
+        }
+        /* Bootstrap 완전 오버라이드 - 모든 div와 table에 적용 */
+        /* 반응형을 위해 min-width 제거 */
+        .turbulence-analysis-content > div,
+        .turbulence-analysis-content div[style*="overflow"],
+        .turbulence-analysis-content div[style*="max-width"] {
+            overflow-x: auto !important;
+            overflow-y: visible !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            display: block !important;
+        }
+        /* 모든 테이블에 강제 적용 - Bootstrap 무시 */
+        /* 반응형을 위해 table-layout: auto 사용 */
+        .turbulence-analysis-content table,
+        .turbulence-analysis-content table[style*="table-layout"],
+        .turbulence-analysis-content div table {
+            font-size: 14px !important;
+            margin: 20px 0 !important;
+            border-collapse: separate !important;
+            border-spacing: 0 !important;
+            table-layout: auto !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            display: table !important;
+            background-color: white !important;
+            /* Bootstrap의 모든 기본 스타일 제거 */
+            border: 1px solid #dee2e6 !important;
+        }
+        /* 테이블 컬럼 너비 명시적 설정 */
+        .turbulence-analysis-content table colgroup,
+        .turbulence-analysis-content .turbulence-table colgroup,
+        .turbulence-analysis-content .table colgroup {
+            display: table-column-group !important;
+        }
+        /* 테이블 헤더 스타일은 app.py의 인라인 스타일이 우선 적용됨 (padding: 10px 8px) */
+        .turbulence-analysis-content table th,
+        .turbulence-analysis-content .turbulence-table th {
+            background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%) !important;
+            color: white !important;
+            font-weight: 600 !important;
+            font-size: 13px !important;
+            padding: 10px 8px !important; /* app.py와 일치 */
+            text-align: center !important;
+            vertical-align: middle !important;
+            border: 1px solid #0a58ca !important;
+            white-space: nowrap !important;
+        }
+        .turbulence-analysis-content table th:first-child,
+        .turbulence-analysis-content .turbulence-table th:first-child {
+            border-top-left-radius: 8px !important;
+        }
+        .turbulence-analysis-content table th:last-child,
+        .turbulence-analysis-content .turbulence-table th:last-child {
+            border-top-right-radius: 8px !important;
+        }
+        .turbulence-analysis-content table td,
+        .turbulence-analysis-content .turbulence-table td {
+            padding: 8px 10px !important;
+            vertical-align: top !important;
+            border: 1px solid #dee2e6 !important;
+            font-size: 13px !important;
+            line-height: 1.0 !important;
+            word-wrap: break-word !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            white-space: normal !important;
+        }
+        /* 내용 및 근거 열은 더 넓게 표시하고 줄바꿈 강제 - Bootstrap 완전 오버라이드 */
+        .turbulence-analysis-content table td:last-child,
+        .turbulence-analysis-content table td.content-cell,
+        .turbulence-analysis-content table[class*="table"] td:last-child,
+        .turbulence-analysis-content table[class*="table"] td.content-cell {
+            width: 50% !important;
+            min-width: 500px !important;
+            max-width: 100% !important;
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            /* Bootstrap 기본 스타일 완전 오버라이드 */
+            display: table-cell !important;
+            /* 텍스트가 잘리지 않도록 강제 */
+            hyphens: auto !important;
+            -webkit-hyphens: auto !important;
+            -moz-hyphens: auto !important;
+            /* 텍스트가 셀 밖으로 나가지 않도록 */
+            box-sizing: border-box !important;
+            /* 강제 줄바꿈 */
+            line-height: 1.0 !important; /* app.py와 일치 */
+            /* 모든 Bootstrap 스타일 무시 */
+            max-width: none !important;
+        }
+        /* 테이블 셀 기본 스타일은 app.py의 인라인 스타일이 우선 적용됨 */
+        /* 아래 스타일은 백업용 (인라인 스타일이 없는 경우를 대비) */
+        .turbulence-analysis-content table td,
+        .turbulence-analysis-content table[class*="table"] td {
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            box-sizing: border-box !important;
+        }
+        /* 빨간색 배경 행의 텍스트 색상 개선 */
+        .turbulence-analysis-content table tbody tr[data-severity="severe"] td,
+        .turbulence-analysis-content .turbulence-table tbody tr[data-severity="severe"] td,
+        .turbulence-analysis-content .table tbody tr[data-severity="severe"] td {
+            color: #212529 !important;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="severe"] td strong,
+        .turbulence-analysis-content .turbulence-table tbody tr[data-severity="severe"] td strong,
+        .turbulence-analysis-content .table tbody tr[data-severity="severe"] td strong {
+            color: #212529 !important;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="severe"] td .text-primary,
+        .turbulence-analysis-content .turbulence-table tbody tr[data-severity="severe"] td .text-primary,
+        .turbulence-analysis-content .table tbody tr[data-severity="severe"] td .text-primary {
+            color: #212529 !important;
+        }
+        /* box-sizing은 위의 td 스타일과 중복되지만 명시적으로 유지 */
+        .turbulence-analysis-content table td,
+        .turbulence-analysis-content .turbulence-table td,
+        .turbulence-analysis-content .table td {
+            box-sizing: border-box !important;
+            max-width: 100% !important;
+        }
+        /* 다른 열들의 너비 설정 */
+        .turbulence-analysis-content table td:first-child,
+        .turbulence-analysis-content .turbulence-table td:first-child {
+            width: 12% !important;
+        }
+        .turbulence-analysis-content table td:nth-child(2),
+        .turbulence-analysis-content .turbulence-table td:nth-child(2) {
+            width: 15% !important;
+        }
+        .turbulence-analysis-content table td:nth-child(3),
+        .turbulence-analysis-content .turbulence-table td:nth-child(3) {
+            width: 10% !important;
+        }
+        .turbulence-analysis-content table td:nth-child(4),
+        .turbulence-analysis-content .turbulence-table td:nth-child(4) {
+            width: 10% !important;
+        }
+        /* 모든 테이블 셀에 줄바꿈 강제 */
+        .turbulence-analysis-content table tbody td,
+        .turbulence-analysis-content .turbulence-table tbody td {
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            word-break: break-word !important;
+        }
+        .turbulence-analysis-content table tbody tr,
+        .turbulence-analysis-content .turbulence-table tbody tr {
+            transition: background-color 0.2s !important;
+        }
+        .turbulence-analysis-content table tbody tr:hover,
+        .turbulence-analysis-content .turbulence-table tbody tr:hover {
+            background-color: #f8f9fa !important;
+        }
+        .turbulence-analysis-content table tbody tr:nth-child(even),
+        .turbulence-analysis-content .turbulence-table tbody tr:nth-child(even) {
+            background-color: #f8f9fa !important;
+        }
+        .turbulence-analysis-content table tbody tr:nth-child(even):hover,
+        .turbulence-analysis-content .turbulence-table tbody tr:nth-child(even):hover {
+            background-color: #e9ecef !important;
+        }
+        .turbulence-analysis-content ul {
+            padding-left: 25px;
+            margin: 15px 0;
+        }
+        .turbulence-analysis-content li {
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.7;
+        }
+        .turbulence-analysis-content .badge {
+            font-size: 0.9em;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        .turbulence-analysis-content strong {
+            font-weight: 600;
+        }
+        /* 일반 행의 strong은 파란색, 빨간색 배경 행의 strong은 검은색 */
+        .turbulence-analysis-content table tbody tr:not([data-severity="severe"]) td strong,
+        .turbulence-analysis-content .turbulence-table tbody tr:not([data-severity="severe"]) td strong,
+        .turbulence-analysis-content .table tbody tr:not([data-severity="severe"]) td strong {
+            color: #0d6efd !important;
+        }
+        .turbulence-analysis-content .text-primary {
+            color: #0d6efd !important;
+        }
+        .turbulence-analysis-content .fw-bold {
+            font-weight: 700;
+        }
+        /* 터뷸런스 레벨별 행 색상 강조 */
+        .turbulence-analysis-content table tbody tr[data-severity="severe"] {
+            background-color: #fff5f5 !important;
+            border-left: 4px solid #dc3545;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="severe"]:hover {
+            background-color: #ffe0e0 !important;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="modtosev"] {
+            background-color: #fffbf0 !important;
+            border-left: 4px solid #ffc107;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="modtosev"]:hover {
+            background-color: #fff3d6 !important;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="moderate"] {
+            background-color: #f0f8ff !important;
+            border-left: 4px solid #0dcaf0;
+        }
+        .turbulence-analysis-content table tbody tr[data-severity="moderate"]:hover {
+            background-color: #e0f2ff !important;
+        }
+        /* 구간 표시 스타일 */
+        .turbulence-analysis-content .route-segment {
+            color: #0d6efd;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        /* 시간 배지 스타일 */
+        .turbulence-analysis-content .time-badge {
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('index') }}">
+                <i class="fas fa-plane me-2"></i>
+                Smart NOTAM3
+            </a>
+            <span class="navbar-text">
+                ✈️ 비행 분석 결과
+            </span>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'danger' if category == 'error' else 'warning' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% if turbulence_analysis or total_pages %}
+        {% if turbulence_analysis %}
+        <!-- 터뷸런스 분석 결과 (먼저 표시) -->
+        <div class="card shadow mt-4">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-cloud-sun-rain me-2"></i>
+                    터뷸런스 및 기상 회피 분석 (Gemini AI)
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if etd_str or takeoff_time_str or eta_str %}
+                <div class="mb-3 p-3 bg-light rounded">
+                    <h6 class="mb-2">비행 시간 정보</h6>
+                    <div class="row">
+                        {% if etd_str %}
+                        <div class="col-md-4">
+                            <strong>ETD (Pushback Time):</strong> {{ etd_str }}
+                        </div>
+                        {% endif %}
+                        {% if takeoff_time_str %}
+                        <div class="col-md-4">
+                            <strong>이륙 시간:</strong> {{ takeoff_time_str }} (ETD + 20분)
+                        </div>
+                        {% endif %}
+                        {% if eta_str %}
+                        <div class="col-md-4">
+                            <strong>착륙 시간 (ETA):</strong> {{ eta_str }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+                
+                <div class="turbulence-analysis-content" style="font-size: 15px; line-height: 1.8; color: #333;">
+                    {{ turbulence_analysis|safe }}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if total_pages %}
+        <!-- ATS FPL Route Validator 결과 (터뷸런스 분석 다음에 표시) -->
+        <div class="card shadow mt-4">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-file-pdf me-2"></i>
+                    ATS FPL Route Validator 분석 결과
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    총 {{ total_pages }}페이지의 PDF를 읽었습니다.
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    📋 OFP Route
+                                    {% if ofp_page_num %}
+                                    <small class="text-muted">({{ ofp_page_num }}페이지)</small>
+                                    {% endif %}
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                {% if ofp_route %}
+                                <div class="alert alert-success">
+                                    <i class="fas fa-check-circle me-2"></i>
+                                    OFP route를 찾았습니다!
+                                </div>
+                                <textarea class="form-control route-textarea" rows="8" readonly>{{ ofp_route }}</textarea>
+                                {% else %}
+                                <div class="alert alert-danger">
+                                    <i class="fas fa-times-circle me-2"></i>
+                                    OFP route를 찾을 수 없습니다.
+                                    {% if ofp_route_fail_reason %}
+                                    <p class="mb-0 mt-2 small">{{ ofp_route_fail_reason }}</p>
+                                    {% endif %}
+                                </div>
+                                {% if page_texts %}
+                                <div class="accordion" id="ofpDebugAccordion">
+                                    {% for idx in range(5) %}
+                                    {% if page_texts[idx] %}
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ofpPage{{ idx + 1 }}">
+                                                {{ idx + 1 }}페이지 텍스트 (디버깅)
+                                            </button>
+                                        </h2>
+                                        <div id="ofpPage{{ idx + 1 }}" class="accordion-collapse collapse" data-bs-parent="#ofpDebugAccordion">
+                                            <div class="accordion-body">
+                                                <pre style="font-size: 11px; max-height: 300px; overflow-y: auto;">{{ page_texts[idx][:2000] }}</pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">📋 ATS FPL Route</h6>
+                            </div>
+                            <div class="card-body">
+                                {% if ats_route %}
+                                <div class="alert alert-success">
+                                    <i class="fas fa-check-circle me-2"></i>
+                                    ATS FPL route를 찾았습니다! (페이지 {{ ats_page_num }})
+                                </div>
+                                <textarea class="form-control route-textarea" rows="8" readonly>{{ ats_route }}</textarea>
+                                {% else %}
+                                <div class="alert alert-danger">
+                                    <i class="fas fa-times-circle me-2"></i>
+                                    'COPY OF ATS FPL' 페이지에서 route를 찾을 수 없습니다.
+                                </div>
+                                {% if ats_page_num %}
+                                <div class="alert alert-info">
+                                    ATS FPL 페이지는 {{ ats_page_num }}페이지에서 찾았지만 route를 추출하지 못했습니다.
+                                </div>
+                                {% endif %}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {% if comparison %}
+                <div class="card mt-4">
+                    <div class="card-header bg-warning">
+                        <h5 class="mb-0">
+                            <i class="fas fa-search me-2"></i>
+                            Route 비교 결과
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <h6>정규화된 OFP Route:</h6>
+                                <pre class="bg-light p-3 rounded"><code>{{ comparison.ofp_normalized }}</code></pre>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>정규화된 ATS FPL Route:</h6>
+                                <pre class="bg-light p-3 rounded"><code>{{ comparison.ats_normalized }}</code></pre>
+                            </div>
+                        </div>
+
+                        {% if comparison.match %}
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle me-2"></i>
+                            <strong>✅ 두 route가 일치합니다!</strong>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>⚠️ 두 route에 차이가 있습니다.</strong>
+                        </div>
+
+                        {% if comparison.only_in_ofp %}
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-2"></i>
+                            <strong>OFP에만 있는 waypoint/airway:</strong> {{ ', '.join(comparison.only_in_ofp) }}
+                        </div>
+                        {% endif %}
+
+                        {% if comparison.only_in_ats %}
+                        <div class="alert alert-danger">
+                            <i class="fas fa-times-circle me-2"></i>
+                            <strong>ATS FPL에만 있는 waypoint/airway:</strong> {{ ', '.join(comparison.only_in_ats) }}
+                        </div>
+                        {% endif %}
+
+                        {% if comparison.order_mismatch %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-sort me-2"></i>
+                            <strong>⚠️ Waypoint 순서가 다릅니다:</strong>
+                            <div class="row mt-2">
+                                <div class="col-md-6">
+                                    <strong>OFP 순서:</strong>
+                                    <pre class="bg-light p-2 rounded">{{ comparison.order_mismatch.ofp_order }}</pre>
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>ATS FPL 순서:</strong>
+                                    <pre class="bg-light p-2 rounded">{{ comparison.order_mismatch.ats_order }}</pre>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% endif %}
+
+                        <div class="card mt-3">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-table me-2"></i>
+                                    상세 Waypoint 리스트
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="waypoint-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Index</th>
+                                                <th>OFP Waypoint</th>
+                                                <th>ATS FPL Waypoint</th>
+                                                <th>Match</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% set max_len = [comparison.ofp_waypoints|length, comparison.ats_waypoints|length]|max %}
+                                            {% for i in range(max_len) %}
+                                            {% set ofp_wpt = comparison.ofp_waypoints[i] if i < comparison.ofp_waypoints|length else '' %}
+                                            {% set ats_wpt = comparison.ats_waypoints[i] if i < comparison.ats_waypoints|length else '' %}
+                                            {% set match = '✅' if ofp_wpt == ats_wpt and ofp_wpt != '' else ('❌' if ofp_wpt != '' and ats_wpt != '' else '⚠️') %}
+                                            {% set row_class = 'match-ok' if match == '✅' else ('match-fail' if match == '❌' else 'match-warn') %}
+                                            <tr class="{{ row_class }}">
+                                                <td>{{ i }}</td>
+                                                <td>{{ ofp_wpt }}</td>
+                                                <td>{{ ats_wpt }}</td>
+                                                <td>{{ match }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% elif ofp_route or ats_route %}
+                <div class="alert alert-warning mt-4">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    하나의 route만 추출되었습니다. 두 route를 모두 추출해야 비교할 수 있습니다.
+                </div>
+                {% else %}
+                <div class="alert alert-danger mt-4">
+                    <i class="fas fa-times-circle me-2"></i>
+                    OFP route와 ATS FPL route를 모두 찾을 수 없습니다.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').then(() => {}).catch(() => {});
+        }
+        // 오프라인에서도 비행 분석 결과 유지: localStorage에 자동 저장
+        function saveAtsResultsForOffline() {
+            try {
+                const cacheData = {
+                    html: document.documentElement.outerHTML,
+                    timestamp: new Date().toISOString(),
+                    type: 'ats'
+                };
+                localStorage.setItem('smartnotam_cached_ats_results', JSON.stringify(cacheData));
+                console.log('[SmartNOTAM] 비행 분석 결과가 오프라인용으로 저장되었습니다.');
+            } catch (e) {
+                console.warn('[SmartNOTAM] 오프라인 저장 실패:', e);
+            }
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(saveAtsResultsForOffline, 500);
+            document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') saveAtsResultsForOffline();
+            });
+        });
+    </script>
+</body>
+</html>
+
