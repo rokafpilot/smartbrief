@@ -9,22 +9,5 @@ steps:
         "."
       ]
 
-  # 2) Cloud Run 배포
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    entrypoint: gcloud
-    args:
-      [
-        "run",
-        "deploy",
-        "smartbriefier",
-        "--image",
-        "gcr.io/notam-454203/smartbriefier",
-        "--region",
-        "asia-northeast3",
-        "--platform",
-        "managed",
-        "--allow-unauthenticated"
-      ]
-
 images:
   - gcr.io/notam-454203/smartbriefier
