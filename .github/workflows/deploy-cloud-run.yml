@@ -11,7 +11,7 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: asia-northeast3
   SERVICE: smartbrief
-  REPO: smartbrief
+  REPO: smartnotam
 
 jobs:
   deploy:
