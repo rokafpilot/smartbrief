@@ -154,6 +154,34 @@ Cloud Run 서비스 화면에서 **Connect to repo** 버튼으로 연결하면, 
 
 ---
 
+## GCR(Cloud Run)에서 번역이 안 될 때
+
+GCR에는 **.env 파일이 없습니다.** 앱이 사용하는 `GEMINI_API_KEY`, `GOOGLE_API_KEY`는 **Cloud Run 서비스의 환경 변수**로 넣어야 합니다.
+
+### 방법 1: 콘솔에서 직접 설정 (가장 빠름)
+
+1. [Cloud Run 콘솔](https://console.cloud.google.com/run) 접속 → 프로젝트 선택 → 서비스 **smartnotam3** 클릭  
+2. **수정 및 새 리비전 배포** 클릭  
+3. **변수 및 시크릿** 탭 → **변수 추가**  
+   - `GEMINI_API_KEY` = (로컬 .env에 있는 키 값)  
+   - `GOOGLE_API_KEY` = (같은 키 또는 별도 키)  
+   - 필요 시 `GOOGLE_MAPS_API_KEY` 도 동일 값으로 추가  
+4. **배포** 클릭  
+
+이후 트리거로 이미지만 다시 배포해도 **환경 변수는 유지**됩니다.
+
+### 방법 2: deploy 스크립트로 한 번 업데이트
+
+로컬에서 한 번만 실행하면, 해당 스크립트에 있는 `API_KEY` 값으로 Cloud Run 환경 변수가 설정됩니다.
+
+```bash
+./deploy/deploy_mac\ ksh2.sh
+```
+
+(또는 `deploy_first.sh` 사용 시, 스크립트 상단의 `API_KEY` 값을 .env와 맞춘 뒤 실행)
+
+---
+
 ## 문제 해결
 
 - **권한 오류**: Cloud Build 서비스 계정에 Artifact Registry 쓰기, Cloud Run 배포 권한이 있어야 합니다. (이전에 `deploy_mac` 스크립트에서 역할 부여한 것과 동일한 프로젝트라면 보통 동작합니다.)

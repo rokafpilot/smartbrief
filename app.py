@@ -11,10 +11,22 @@ import os
 if sys.platform == "win32":
     os.environ["PYTHONIOENCODING"] = "utf-8"
 
-# .env 파일 로드 (한 번만)
+# .env 파일 로드 (app.py 기준 경로로 로드 → 로컬/IDE 실행 시에도 동작)
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    from pathlib import Path
+    _env_path = Path(__file__).resolve().parent / '.env'
+    load_dotenv(_env_path)
+    _gk = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+    _has_gemini_key = bool(_gk)
+    if _env_path.exists():
+        import logging as _log
+        _log.getLogger(__name__).debug(f".env 로드: {_env_path}")
+    import logging as _log
+    if _has_gemini_key:
+        _log.getLogger(__name__).info(f"번역 API 키 로드: 됨 (키 길이: {len(_gk)}자, 재시작 시 바뀐 키면 이 숫자가 달라짐)")
+    else:
+        _log.getLogger(__name__).info("번역 API 키 로드: 안 됨 (로컬: .env에 GEMINI_API_KEY 또는 GOOGLE_API_KEY 설정)")
 except ImportError:
     pass  # dotenv가 설치되지 않은 경우 무시
 
@@ -546,11 +558,16 @@ _integrated_translator_instance = None
 _notam_comprehensive_analyzer_instance = None
 
 def get_integrated_translator():
-    """Lazy initialization: 필요할 때만 IntegratedNOTAMTranslator 인스턴스 생성"""
+    """Lazy initialization: 필요할 때만 IntegratedNOTAMTranslator 인스턴스 생성.
+    - 로컬: app 상단에서 로드한 .env의 GEMINI_API_KEY/GOOGLE_API_KEY 사용
+    - GCR: Cloud Run 서비스에 설정된 환경 변수 사용 (콘솔 환경 변수)"""
     global _integrated_translator_instance
     if _integrated_translator_instance is None:
         logger.info("IntegratedNOTAMTranslator 초기화 중...")
-        _integrated_translator_instance = IntegratedNOTAMTranslator()
+        api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+        _integrated_translator_instance = IntegratedNOTAMTranslator(api_key=api_key)
+        if not _integrated_translator_instance.gemini_enabled:
+            logger.warning("Gemini API 키 없음. 로컬: .env에 GEMINI_API_KEY 또는 GOOGLE_API_KEY 설정. GCR: 서비스 환경 변수 설정 확인.")
         logger.info("IntegratedNOTAMTranslator 초기화 완료")
     return _integrated_translator_instance
 

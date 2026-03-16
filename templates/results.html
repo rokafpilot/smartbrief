@@ -3713,48 +3713,47 @@
             }
         }
         
-        // NOTAM 데이터 가져오기 함수
+        // NOTAM 데이터 가져오기 함수 (현재 표시된 것만 - 다른 용도)
         function getNotamData() {
+            return getNotamDataFromItems(document.querySelectorAll('.notam-item:not([style*="display: none"])'), '필터링된');
+        }
+        
+        // 선택된 공항 분석용: 페이지의 전체 NOTAM 수집 (표시 여부 무관) → 공항별로 서버에서 정확히 필터링
+        function getNotamDataAll() {
+            return getNotamDataFromItems(document.querySelectorAll('.notam-item'), '전체');
+        }
+        
+        function getNotamDataFromItems(notamItems, label) {
             try {
-                // 현재 표시된 NOTAM만 수집 (필터링된 NOTAM)
-                const notamItems = document.querySelectorAll('.notam-item:not([style*="display: none"])');
                 const notamData = [];
-                
                 notamItems.forEach((item, index) => {
-                    // NOTAM 번호 추출 (테이블에서 실제 NOTAM 번호 가져오기)
-                    let notamNumber = `NOTAM_${index + 1}`; // 기본값
+                    let notamNumber = `NOTAM_${index + 1}`;
                     const notamNumberCell = item.querySelector('table tr:first-child td');
                     if (notamNumberCell) {
                         const extractedNumber = notamNumberCell.textContent?.trim();
                         if (extractedNumber && extractedNumber !== 'N/A') {
-                            notamNumber = extractedNumber; // 예: "N3720/25"
+                            notamNumber = extractedNumber;
                         }
                     }
-                    
-                    // 공항 코드 추출 (bg-info 배지)
                     const airportBadges = item.querySelectorAll('.badge.bg-info');
                     const airports = Array.from(airportBadges).map(badge => badge.textContent.trim());
-                    
-                    // NOTAM 텍스트 추출
                     const text = item.querySelector('.translation-text')?.textContent?.trim() || '';
                     const description = item.querySelector('.notam-description')?.textContent?.trim() || '';
-                    
-                    // 시간 정보 추출
                     const effectiveTime = item.getAttribute('data-effective-time') || '';
                     const expiryTime = item.getAttribute('data-expiry-time') || '';
-                    
                     notamData.push({
                         index: index + 1,
                         notam_number: notamNumber,
                         airports: airports,
+                        airport_code: airports[0] || '',  // 서버 필터 호환
                         text: text,
                         description: description,
+                        korean_translation: text,
                         effective_time: effectiveTime,
                         expiry_time: expiryTime
                     });
                 });
-                
-                console.log(`getNotamData: ${notamData.length}개 필터링된 NOTAM 수집`);
+                console.log(`getNotamData(${label}): ${notamData.length}개 NOTAM 수집`);
                 return notamData;
             } catch (error) {
                 console.error('getNotamData 오류:', error);
@@ -3792,11 +3791,11 @@
                 };
             });
             
+            // 선택된 공항별로 서버가 정확히 필터링하도록 전체 NOTAM 전달 (표시 필터에 영향받지 않음)
             const data = {
                 airports: airports,
-                notam_data: window.currentNotamData || getNotamData()
+                notam_data: window.currentNotamData || getNotamDataAll()
             };
-            
             
             try {
                 const response = await fetch('/api/analyze_airports_comprehensive', {

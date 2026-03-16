@@ -94,23 +94,31 @@ BLUE_STYLE_PATTERNS = [
     r'\b스탠드\s*(\d+)\b',  # 스탠드 711 형식
 ]
 
-# 환경 변수 로드
-load_dotenv()
+# 모듈 로드 시에는 dotenv 호출하지 않음 (로컬은 app.py에서, GCR은 환경 변수만 사용)
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class IntegratedNOTAMTranslator:
-    """통합 NOTAM 번역기 - 번역과 요약을 한 번의 API 호출로 처리"""
+    """통합 NOTAM 번역기 - 번역과 요약을 한 번의 API 호출로 처리.
+    - 로컬: app.py에서 .env 로드 후 api_key를 넘기면 그대로 사용
+    - GCR: Cloud Run 환경 변수로 전달된 api_key 사용 (콘솔 환경 변수)"""
     
     def __init__(self, api_key: Optional[str] = None):
         self.logger = logging.getLogger(__name__)
         
-        # 환경 변수 강제 재로드 (GCR 환경에서 필요할 수 있음)
-        load_dotenv(override=True)
-        
-        # Gemini API 설정
+        # api_key가 넘어오지 않은 경우에만 .env 시도 (로컬에서 직접 생성하는 경우 등)
+        if api_key is None:
+            try:
+                from pathlib import Path
+                _root = Path(__file__).resolve().parent.parent
+                _env = _root / '.env'
+                if _env.exists():
+                    load_dotenv(_env, override=True)
+            except Exception:
+                pass
+        # 넘겨받은 키 우선, 없으면 환경 변수 (로컬 .env 또는 GCR 환경 변수)
         self.api_key = api_key or os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
         
         if not self.api_key:
@@ -121,6 +129,7 @@ class IntegratedNOTAMTranslator:
                 genai.configure(api_key=self.api_key)
                 self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
                 self.gemini_enabled = True
+                self.logger.info(f"Gemini API 키 적용됨 (키 길이: {len(self.api_key)}자, 재시작 후 바꿨으면 첫 번역 시 이 값이 반영됨)")
             except Exception as e:
                 self.logger.error(f"Gemini API 초기화 실패: {e}", exc_info=True)
                 self.gemini_enabled = False
@@ -128,13 +137,18 @@ class IntegratedNOTAMTranslator:
         # 캐시 설정
         self.cache = {}
         self.cache_enabled = True
+        # 403/429 로그는 한 번만 출력
+        self._logged_403_leaked = False
+        self._logged_429_quota = False
         
         # 처리 설정 (개별 처리 최적화 - notam_translator.py 참조)
-        # 성능 개선: 워커 수 증가 (3 -> 5)
-        self.max_workers = int(os.getenv('TRANSLATION_MAX_WORKERS', '5'))  # 환경변수로 조정 가능, 기본값 5
+        # 429 방지: 동시 요청 수 기본 2로 제한 (환경변수 TRANSLATION_MAX_WORKERS로 조정 가능)
+        self.max_workers = int(os.getenv('TRANSLATION_MAX_WORKERS', '2'))
         self.batch_size = 10  # 배치 크기를 10으로 조정
         # API 호출 타임아웃 (초)
         self.api_timeout = int(os.getenv('GEMINI_API_TIMEOUT', '30'))  # 기본값 30초
+        # 429 할당량 초과 방지: API 호출 전 대기(초). 0이면 미적용. 기본 1초
+        self.rate_limit_delay = float(os.getenv('GEMINI_RATE_LIMIT_DELAY', '1.0'))
         
         # 학습 모듈 초기화 (선택적)
         self.learning_enabled = LEARNING_AVAILABLE and os.getenv('ENABLE_GEMINI_LEARNING', 'false').lower() == 'true'
@@ -377,15 +391,15 @@ class IntegratedNOTAMTranslator:
                 except FutureTimeoutError as timeout_error:
                     api_elapsed = time.time() - api_start_time
                     self.logger.warning(f"[NOTAM {index+1}] 번역 타임아웃 ({api_elapsed:.2f}초 경과): {timeout_error}")
-                    # 타임아웃 시 기본값 반환
-                    english_result = {'translation': e_section, 'summary': f'번역 타임아웃 (>{self.api_timeout}초)'}
-                    korean_result = {'translation': e_section, 'summary': f'번역 타임아웃 (>{self.api_timeout}초)'}
+                    err_msg = f'번역 타임아웃 (>{self.api_timeout}초). 네트워크 또는 API 한도 확인.'
+                    english_result = {'translation': err_msg, 'summary': err_msg}
+                    korean_result = {'translation': err_msg, 'summary': err_msg}
                 except Exception as e:
                     api_elapsed = time.time() - api_start_time
                     self.logger.error(f"[NOTAM {index+1}] 번역 오류 ({api_elapsed:.2f}초 경과): {e}", exc_info=True)
-                    # 오류 시 기본값 반환
-                    english_result = {'translation': e_section, 'summary': f'번역 오류: {str(e)[:50]}'}
-                    korean_result = {'translation': e_section, 'summary': f'번역 오류: {str(e)[:50]}'}
+                    err_msg = f'번역 실패 (API 오류): {str(e)[:80]}'
+                    english_result = {'translation': err_msg, 'summary': err_msg}
+                    korean_result = {'translation': err_msg, 'summary': err_msg}
             
             api_elapsed = time.time() - api_start_time
             self.logger.debug(f"[NOTAM {index+1}] API 호출 완료 (총 {api_elapsed:.2f}초)")
@@ -667,7 +681,7 @@ class IntegratedNOTAMTranslator:
             번역과 요약이 포함된 결과 리스트
         """
         if not self.gemini_enabled:
-            return [{'translation': notam, 'summary': ''} for notam in notams]
+            return [{'translation': '번역 비활성화 (API 키 미설정)', 'summary': ''} for _ in notams]
         
         # 캐시 확인
         batch_key = f"integrated_{target_language}_{hashlib.md5(''.join(notams).encode()).hexdigest()}"
@@ -706,7 +720,7 @@ class IntegratedNOTAMTranslator:
             번역과 요약이 포함된 결과
         """
         if not self.gemini_enabled:
-            return {'translation': notam_text, 'summary': ''}
+            return {'translation': '번역 비활성화 (API 키 미설정)', 'summary': ''}
         
         # 캐시 확인
         cache_key = f"integrated_single_{target_language}_{hashlib.md5(notam_text.encode()).hexdigest()}"
@@ -728,6 +742,9 @@ class IntegratedNOTAMTranslator:
             else:
                 prompt = base_prompt
             
+            # 429 방지: 호출 전 대기 (할당량 초과 시 GEMINI_RATE_LIMIT_DELAY 늘리기, 예: 2)
+            if self.rate_limit_delay > 0:
+                time.sleep(self.rate_limit_delay)
             response = self.model.generate_content(prompt)
             
             if not response or not hasattr(response, 'text') or not response.text:
@@ -764,9 +781,23 @@ class IntegratedNOTAMTranslator:
             return result
             
         except Exception as e:
+            err_str = str(e)
+            # 403 API key leaked: 한 번만 경고 로그
+            if '403' in err_str and 'leaked' in err_str.lower():
+                if not self._logged_403_leaked:
+                    self._logged_403_leaked = True
+                    self.logger.warning("Gemini 403: API 키가 유출로 차단됨. 새 키 발급 후 .env(로컬) 또는 Cloud Run 환경 변수(GCR)에 설정하세요.")
+                    self.logger.warning(f"Google 응답 원문: {err_str[:200]}")
+                return {'translation': f'번역 실패 (API 키 유출로 차단됨. 새 키로 교체 필요)', 'summary': err_str[:80]}
+            # 429 할당량 초과: 한 번만 경고 + .env 조정 안내
+            if '429' in err_str or 'quota' in err_str.lower():
+                if not self._logged_429_quota:
+                    self._logged_429_quota = True
+                    self.logger.warning("Gemini 429: 할당량 초과. .env에 GEMINI_RATE_LIMIT_DELAY=2, TRANSLATION_MAX_WORKERS=1 넣고 재시작해보세요.")
+                return {'translation': '번역 실패 (API 할당량 초과. 잠시 후 재시도 또는 .env에서 요청 속도 조정)', 'summary': err_str[:80]}
             self.logger.error(f"단일 통합 처리 오류: {e}", exc_info=True)
             self.logger.error(f"오류 발생 텍스트: {notam_text[:200]}...")
-            return {'translation': notam_text, 'summary': f'처리 오류: {str(e)}'}
+            return {'translation': f'번역 실패 (API 오류): {err_str[:80]}', 'summary': err_str[:80]}
     
     def create_integrated_prompt(self, notams: List[str], target_language: str, airport_code: str = None) -> str:
         """
@@ -1542,14 +1573,16 @@ Summary: [Concise operational summary following the rules above]"""
         return cleaned_text
     
     def _create_fallback_results(self, notams_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """폴백 결과 생성 (API 비활성화 시)"""
+        """폴백 결과 생성 (API 비활성화 시). 원문 대신 안내 메시지 표시."""
+        msg_ko = '번역을 사용하려면 .env(로컬) 또는 Cloud Run 환경 변수(GCR)에 GEMINI_API_KEY 또는 GOOGLE_API_KEY를 설정하세요.'
+        msg_en = 'Set GEMINI_API_KEY or GOOGLE_API_KEY in .env (local) or Cloud Run env vars (GCR) to enable translation.'
         results = []
         for notam in notams_data:
             enhanced_notam = notam.copy()
             enhanced_notam.update({
-                'korean_translation': notam.get('description', ''),
+                'korean_translation': msg_ko,
                 'korean_summary': 'API 비활성화',
-                'english_translation': notam.get('description', ''),
+                'english_translation': msg_en,
                 'english_summary': 'API disabled',
                 'e_section': self.extract_e_section(notam.get('description', ''))
             })
@@ -1581,6 +1614,9 @@ Summary: [Concise operational summary following the rules above]"""
         """
         if not notams_data:
             return []
+        if not self.gemini_enabled:
+            self.logger.warning("Gemini API 비활성화됨. 안내 메시지 반환")
+            return self._create_fallback_results(notams_data)
         
         start_time = time.time()
         
