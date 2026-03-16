@@ -9,6 +9,7 @@ import time
 import hashlib
 import logging
 import threading
+import json
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 from datetime import datetime
@@ -144,11 +145,16 @@ class IntegratedNOTAMTranslator:
         # 처리 설정 (개별 처리 최적화 - notam_translator.py 참조)
         # 429 방지: 동시 요청 수 기본 2로 제한 (환경변수 TRANSLATION_MAX_WORKERS로 조정 가능)
         self.max_workers = int(os.getenv('TRANSLATION_MAX_WORKERS', '2'))
-        self.batch_size = 10  # 배치 크기를 10으로 조정
+        self.batch_size = 10  # (이전 배치 로직에서 사용하던 값, 현재는 주 사용 아님)
         # API 호출 타임아웃 (초)
         self.api_timeout = int(os.getenv('GEMINI_API_TIMEOUT', '30'))  # 기본값 30초
         # 429 할당량 초과 방지: API 호출 전 대기(초). 0이면 미적용. 기본 1초
         self.rate_limit_delay = float(os.getenv('GEMINI_RATE_LIMIT_DELAY', '1.0'))
+        # 하이브리드 배치 처리 설정
+        # NOTAM 개수가 batch_threshold 이상이면 배치 + 폴백 전략 사용
+        self.batch_threshold = int(os.getenv('NOTAM_BATCH_THRESHOLD', '50'))
+        # 한 배치에 포함할 NOTAM 개수 (예: 10~25 권장, 기본 20)
+        self.batch_group_size = int(os.getenv('NOTAM_BATCH_GROUP_SIZE', '20'))
         
         # 학습 모듈 초기화 (선택적)
         self.learning_enabled = LEARNING_AVAILABLE and os.getenv('ENABLE_GEMINI_LEARNING', 'false').lower() == 'true'
@@ -819,6 +825,38 @@ class IntegratedNOTAMTranslator:
     def create_korean_integrated_prompt(self, notams: List[str], airport_code: str = None) -> str:
         """한국어 통합 프롬프트 생성"""
         notams_text = "\n\n".join([f"{notam}" for notam in notams])
+        
+        # TDM 트랙 NOTAM은 별도 간략 프롬프트 사용 (웨이포인트 과다 나열 방지)
+        if self._is_tdm_track_notam(notams_text):
+            return f"""다음 TDM(TRACK) NOTAM을 비행 승무원이 이해하기 쉬운 간단한 한국어로 정리해 주세요.
+
+원문:
+{notams_text}
+
+요청사항:
+1. NOTAM이 말하는 **트랙 이름(예: TRK C)**, 적용 기간, 적용 구간의 대략적인 영역(예: 북태평양 특정 구간)만 요약해 주세요.
+2. 웨이포인트 이름(JOWEN, LOHNE, ARCAL, 59N160W 등)은 **모두 일일이 나열하지 말고**, "지정된 여러 웨이포인트를 따라" 정도로만 간단히 묶어서 설명해 주세요.
+3. 운항 관점에서 중요한 내용(예: "해당 기간 동안 TDM TRK C를 따라 비행하는 항공기는 이 정보를 참고해야 함")만 정리해 주세요.
+4. 출력 형식은 다음과 같이 해주세요.
+
+주요 내용:
+[한 줄 요약]
+
+상세 내용:
+
+• [트랙 이름과 적용 기간에 대한 설명]
+• [해당 트랙이 적용되는 대략적인 구간에 대한 설명]
+
+운영 지침:
+
+• [조종사/디스패처가 알아야 할 운항상 주의사항]
+
+기타:
+
+• [추가로 알아두면 좋은 사항이 있을 경우만 간단히]
+
+5. 웨이포인트 전체를 세세하게 나열하는 번역은 피하고, "지정된 웨이포인트들을 따라 비행하는 구간" 정도로만 표현해 주세요.
+6. 위 네 개 섹션(주요 내용/상세 내용/운영 지침/기타)만 포함하고, 다른 제목이나 설명 문장은 넣지 마세요."""
         
         # 공항 코드 정보 추가 (개인화 제외)
         airport_info = ""
@@ -1617,6 +1655,12 @@ Summary: [Concise operational summary following the rules above]"""
         if not self.gemini_enabled:
             self.logger.warning("Gemini API 비활성화됨. 안내 메시지 반환")
             return self._create_fallback_results(notams_data)
+        # 하이브리드 전략: NOTAM 개수가 많으면 배치 + 폴백 사용
+        if len(notams_data) >= self.batch_threshold:
+            try:
+                return self._process_notams_batch_with_fallback(notams_data)
+            except Exception as e:
+                self.logger.error(f"배치 처리 전체 실패, 개별 처리로 폴백합니다: {e}", exc_info=True)
         
         start_time = time.time()
         
@@ -1740,3 +1784,254 @@ Summary: [Concise operational summary following the rules above]"""
         self.logger.debug(f"처리 완료: {len(results)}개, {processing_time:.2f}초, 평균 {processing_time/len(results):.2f}s/개")
         
         return results
+
+    def _batch_translate_language(self, texts: List[str], target_language: str) -> Dict[int, Dict[str, str]]:
+        """
+        단일 언어에 대해 다수 NOTAM을 한 번에 번역/요약.
+        입력: 인덱스 0..n-1 순서의 텍스트 리스트
+        출력: {index: {"translation": ..., "summary": ...}, ...}
+        """
+        if not texts:
+            return {}
+        if not self.gemini_enabled:
+            return {i: {'translation': '번역 비활성화 (API 키 미설정)', 'summary': ''} for i in range(len(texts))}
+
+        numbered_blocks = []
+        for idx, t in enumerate(texts):
+            numbered_blocks.append(f"ID {idx}:\n{t}")
+        joined_text = "\n\n".join(numbered_blocks)
+
+        # 언어별 프롬프트 설계
+        if target_language == 'ko':
+            # 한국어: 주요 내용 + 상세 내용 두 섹션만 요구 (배치 안정성 향상용)
+            prompt = f"""
+당신은 항공 NOTAM을 한국어로 번역/정리하는 전문가입니다.
+
+아래에 여러 개의 NOTAM 원문이 주어집니다. 각 NOTAM은 "ID n:" 형식으로 시작하며, n은 0부터 시작하는 정수입니다.
+
+각 NOTAM(ID별)에 대해 다음 정보를 생성해 주세요:
+- main: NOTAM의 핵심 내용을 한 줄로 요약한 문장
+- detail: 운항 관점에서 알아야 할 내용을 2~3문장 정도로 정리한 문장
+
+반드시 아래 JSON 형식의 배열로만 응답해야 합니다 (마크다운, 설명 문장, 기타 텍스트 금지):
+[
+  {{"id": 0, "main": "주요 내용 한 줄", "detail": "상세 내용 2~3문장"}},
+  {{"id": 1, "main": "...", "detail": "..."}}
+]
+
+규칙:
+1. main은 최대한 간결하게, 한 문장으로만 작성합니다.
+2. detail에는 운항상 중요한 정보(무엇이 제한/변경/비가용인지, 언제부터 언제까지인지)를 자연스러운 한국어로 2~3문장 정도로 요약합니다.
+3. 웨이포인트(TDM 트랙 등)나 지점 이름이 매우 많을 경우, 모두 나열하지 말고
+   - "여러 지정 웨이포인트를 따라 설정된 구간" 과 같이 묶어서 표현해 주세요.
+4. 고도, 시간, 구역 등 운항에 직접적인 영향을 주는 정보는 가능한 한 유지합니다.
+5. JSON 배열 바깥에 어떤 텍스트도 추가하지 마세요.
+
+NOTAM 원문들:
+{joined_text}
+"""
+        else:
+            role_desc = "English"
+            prompt = f"""
+You are a professional NOTAM translator.
+
+Below you are given multiple NOTAM texts, each prefixed with its zero-based index like:
+ID 0:
+...
+ID 1:
+...
+
+Translate and summarize EACH NOTAM independently into clear {role_desc}.
+
+Return the result STRICTLY as a valid JSON array (no markdown, no comments, no extra text), where each element has:
+  - "id": integer index of the NOTAM (0-based)
+  - "translation": string, the {role_desc} translation
+  - "summary": string, a brief operational summary
+
+Example of the REQUIRED output format:
+[
+  {{"id": 0, "translation": "...", "summary": "..."}},
+  {{"id": 1, "translation": "...", "summary": "..."}}
+]
+
+DO NOT include any explanation, markdown, or text before or after the JSON.
+
+NOTAM texts:
+{joined_text}
+"""
+
+        if self.rate_limit_delay > 0:
+            time.sleep(self.rate_limit_delay)
+
+        response = self.model.generate_content(prompt)
+        if not response or not hasattr(response, 'text') or not response.text:
+            raise RuntimeError("배치 번역 응답이 비어있습니다.")
+
+        raw = response.text.strip()
+
+        # JSON만 추출 (앞뒤에 이상한 텍스트가 붙었을 가능성 대비)
+        start = raw.find('[')
+        end = raw.rfind(']')
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(f"배치 번역 응답에서 JSON 배열을 찾지 못했습니다: {raw[:200]}")
+        json_str = raw[start:end + 1]
+
+        try:
+            data = json.loads(json_str)
+        except Exception as e:
+            raise ValueError(f"배치 번역 JSON 파싱 실패: {e}: {json_str[:200]}")
+
+        if not isinstance(data, list):
+            raise ValueError("배치 번역 응답이 리스트 형식이 아닙니다.")
+
+        results: Dict[int, Dict[str, str]] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if 'id' not in item:
+                continue
+            idx = item.get('id')
+            if not isinstance(idx, int):
+                continue
+            if idx < 0 or idx >= len(texts):
+                continue
+
+            if target_language == 'ko':
+                # 한국어: main/detail을 받아 translation/summary로 변환
+                main = str(item.get('main', '') or '').strip()
+                detail = str(item.get('detail', '') or '').strip()
+                if main or detail:
+                    translation_parts = []
+                    if main:
+                        translation_parts.append(f"주요 내용:\n{main}")
+                    if detail:
+                        translation_parts.append(f"\n상세 내용:\n{detail}")
+                    translation = "\n".join(translation_parts).strip()
+                    summary = main or detail
+                else:
+                    translation = ''
+                    summary = ''
+            else:
+                # 영어: 기존 translation/summary 필드 사용
+                translation = str(item.get('translation', '') or '')
+                summary = str(item.get('summary', '') or '')
+
+            results[idx] = {'translation': translation, 'summary': summary}
+
+        return results
+
+    def _process_notams_batch_with_fallback(self, notams_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        NOTAM들을 배치(그룹) 단위로 처리.
+        - 그룹당 영어/한국어 각각 1콜
+        - 그룹 단위로 실패 시 해당 그룹만 개별 처리로 폴백
+        """
+        total = len(notams_data)
+        if total == 0:
+            return []
+
+        # 원문 텍스트 준비 (process_notams_individual과 동일 로직 재사용)
+        original_texts: List[str] = []
+        for notam in notams_data:
+            original_text = notam.get('original_text', notam.get('description', ''))
+            if original_text:
+                clean_text = re.sub(r'<span[^>]*>', '', original_text)
+                clean_text = re.sub(r'</span>', '', clean_text)
+                clean_text = re.sub(r'<[^>]+>', '', clean_text)
+                clean_text = clean_text.strip()
+            else:
+                clean_text = ''
+
+            if not clean_text or clean_text.strip() == 'D)' or len(clean_text.strip()) < 10:
+                e_field = notam.get('e_field', '')
+                if e_field:
+                    e_field_clean = re.sub(r'<span[^>]*>', '', e_field)
+                    e_field_clean = re.sub(r'</span>', '', e_field_clean)
+                    e_field_clean = re.sub(r'<[^>]+>', '', e_field_clean)
+                    e_field_clean = e_field_clean.strip()
+                    if e_field_clean:
+                        clean_text = e_field_clean
+
+            original_texts.append(clean_text)
+
+        results: List[Optional[Dict[str, Any]]] = [None] * total
+
+        group_size = max(1, self.batch_group_size)
+        for start_idx in range(0, total, group_size):
+            end_idx = min(start_idx + group_size, total)
+            group_indices = list(range(start_idx, end_idx))
+            group_texts = [original_texts[i] for i in group_indices]
+
+            self.logger.info(f"배치 번역 그룹 처리: {start_idx+1}-{end_idx} / {total}")
+
+            try:
+                # 영어/한국어 모두 배치 번역 (한국어는 main+detail 구조)
+                en_results = self._batch_translate_language(group_texts, 'en')
+                ko_results = self._batch_translate_language(group_texts, 'ko')
+            except Exception as e:
+                # 그룹 단위 배치 실패 → 해당 구간만 개별 처리로 폴백
+                self.logger.error(f"배치 그룹 {start_idx+1}-{end_idx} 처리 실패, 개별 처리로 폴백: {e}", exc_info=True)
+                # 기존 개별 처리 로직 재사용을 위해 부분 리스트에 대해 재귀적으로 호출
+                sub_results = self.process_notams_individual(notams_data[start_idx:end_idx])
+                for offset, notam_res in enumerate(sub_results):
+                    results[start_idx + offset] = notam_res
+                continue
+
+            # 그룹 내 각 NOTAM에 대해 결과 병합, 부족한 것은 개별 호출로 폴백
+            for local_idx, global_idx in enumerate(group_indices):
+                notam = notams_data[global_idx]
+                e_section = original_texts[global_idx]
+
+                en = en_results.get(local_idx)
+                ko = ko_results.get(local_idx)
+
+                # 필요 시 개별 호출 폴백 (해당 NOTAM 하나만)
+                if not en or not en.get('translation'):
+                    en = self.process_single_integrated(e_section, 'en', notam.get('airport_code', 'UNKNOWN'))
+                if not ko or not ko.get('translation'):
+                    ko = self.process_single_integrated(e_section, 'ko', notam.get('airport_code', 'UNKNOWN'))
+
+                korean_translation = ko.get('translation', '')
+                korean_summary = ko.get('summary', '')
+                english_translation = en.get('translation', '')
+                english_summary = en.get('summary', '')
+
+                # 한국어 번역은 HTML 변환 + 색상 스타일 적용
+                if korean_translation:
+                    korean_translation = self.convert_markdown_to_html(self.apply_color_styles(korean_translation))
+                else:
+                    korean_translation = '번역 실패'
+                if not korean_summary:
+                    korean_summary = '요약 실패'
+
+                # 영어 번역은 색상 스타일만 적용
+                if english_translation:
+                    english_translation = self.apply_color_styles(english_translation)
+                else:
+                    english_translation = 'Translation failed'
+                if not english_summary:
+                    english_summary = 'Summary failed'
+
+                enhanced_notam = notam.copy()
+                enhanced_notam.update({
+                    'korean_translation': korean_translation,
+                    'korean_summary': korean_summary,
+                    'english_translation': english_translation,
+                    'english_summary': english_summary,
+                    'e_section': e_section
+                })
+
+                results[global_idx] = enhanced_notam
+
+        # None 제거 (이론상 없어야 하지만 안전장치)
+        final_results: List[Dict[str, Any]] = []
+        for i, r in enumerate(results):
+            if r is None:
+                # 마지막 폴백: 개별 처리
+                self.logger.warning(f"배치 처리 후 NOTAM {i+1} 결과 없음, 개별 폴백 수행")
+                single = self.process_single_notam_complete(notams_data[i], original_texts[i], i)
+                final_results.append(single)
+            else:
+                final_results.append(r)
+
+        return final_results

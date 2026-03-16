@@ -2951,13 +2951,17 @@ Provide only the translation:"""
             edto_airports = re.findall(r'[A-Z]{4}', edto_match.group(1))
             package2_airports.extend(edto_airports)
         
-        # 중복 제거 및 실제 존재하는 공항만 필터링 (추출한 순서 유지)
-        package2_airports = list(set(package2_airports))
-        existing_package2 = [airport for airport in package2_airports if airport in all_airports]
-        if existing_package2:
-            package_airports['package2'] = existing_package2
+        # 중복 제거 (추출 순서 유지) - ERA/EDTO/REFILE에 명시된 공항은
+        # NOTAM이 실제로 존재하지 않더라도 모두 포함해야 하므로 all_airports로 필터링하지 않는다.
+        dedup_package2 = []
+        for airport in package2_airports:
+            if airport not in dedup_package2:
+                dedup_package2.append(airport)
+
+        if dedup_package2:
+            package_airports['package2'] = dedup_package2
             # 동적으로 추출된 순서로 package_airport_order 업데이트
-            self.package_airport_order['package2'] = existing_package2
+            self.package_airport_order['package2'] = dedup_package2
         
         # Package 3 정보 추출 - FIR 라인에서 공항 코드 추출
         package3_airports = []
