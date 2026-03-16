@@ -1,0 +1,24 @@
+name: Sync Fork
+
+on:
+  schedule:
+    - cron: '0 * * * *' # 매 시간 정각에 실행
+  workflow_dispatch: # 직접 버튼 눌러서 실행 가능하게 함
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync Upstream
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+        with:
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          upstream_repository: rokapilot/smartbrief  # 원본 주소
+          upstream_branch: main
+          target_branch: main
+          test_mode: false
